@@ -1,0 +1,419 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Youtube, 
+  Scissors, 
+  Download, 
+  Play, 
+  CheckCircle2, 
+  AlertCircle, 
+  Loader2,
+  Zap,
+  TrendingUp,
+  Clock,
+  Sparkles
+} from 'lucide-react';
+
+// --- Configuration & Constants ---
+const PROCESSING_STEPS = [
+  { id: 'fetching', label: 'Fetching video in highest quality...', duration: 2000 },
+  { id: 'transcribing', label: 'Transcribing audio & detecting speakers...', duration: 3000 },
+  { id: 'analyzing', label: 'AI is analyzing for viral moments...', duration: 0 }, // Wait for API
+  { id: 'cropping', label: 'Auto-framing and cropping to 9:16 portrait...', duration: 2000 },
+];
+
+const App = () => {
+  const [url, setUrl] = useState('');
+  const [status, setStatus] = useState('idle'); // idle, processing, completed, error
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const [clips, setClips] = useState([]);
+  const [error, setError] = useState(null);
+  const [toastMessage, setToastMessage] = useState('');
+  const progressIntervalRef = useRef(null);
+
+  // --- API Call to Gemini ---
+  const generateViralClips = async () => {
+    try {
+      const apiKey = ""; // Canvas will automatically provide it in runtime
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+      
+      const payload = {
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { 
+                text: "You are an expert AI video editor and social media manager. Based on a generic popular podcast about 'The Future of AI, Technology, and Human Psychology', generate exactly 10 highly engaging short-form video clip concepts (for TikTok/Reels/Shorts). Ensure the topics are very intriguing. Score them realistically but keep them highly viral." 
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                title: { type: "STRING", description: "A catchy, clickbaity title for the clip (max 6 words)." },
+                viralScore: { type: "INTEGER", description: "A score from 70 to 99 indicating viral potential." },
+                captionPreview: { type: "STRING", description: "A dramatic 4-8 word quote from the clip to show as on-screen text." },
+                reasoning: { type: "STRING", description: "Why this clip will go viral." }
+              },
+              propertyOrdering: ["title", "viralScore", "captionPreview", "reasoning"]
+            }
+          }
+        }
+      };
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to generate clips from AI.");
+      }
+
+      const result = await response.json();
+      
+      if (
+        result.candidates && 
+        result.candidates.length > 0 &&
+        result.candidates[0].content && 
+        result.candidates[0].content.parts &&
+        result.candidates[0].content.parts.length > 0
+      ) {
+        let jsonText = result.candidates[0].content.parts[0].text;
+        
+        // Membersihkan format markdown jika model mengembalikannya
+        jsonText = jsonText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+        jsonText = jsonText.replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+        
+        const parsedClips = JSON.parse(jsonText);
+        // Sort descending by viral score
+        const sortedClips = parsedClips.sort((a, b) => b.viralScore - a.viralScore);
+        return sortedClips;
+      } else {
+        throw new Error("Unexpected API response structure.");
+      }
+    } catch (err) {
+      console.error("Gemini API Error:", err);
+      throw err;
+    }
+  };
+
+  // --- Processing Simulation ---
+  const handleClipIt = async () => {
+    if (!url || !url.includes('youtu')) {
+      setError("Please enter a valid YouTube URL.");
+      return;
+    }
+
+    setError(null);
+    setStatus('processing');
+    setCurrentStepIndex(0);
+    setProgress(0);
+    setClips([]);
+
+    // Step 1: Fetching (Mock)
+    await simulateProgress(0, 20, PROCESSING_STEPS[0].duration);
+    setCurrentStepIndex(1);
+    
+    // Step 2: Transcribing (Mock)
+    await simulateProgress(20, 50, PROCESSING_STEPS[1].duration);
+    setCurrentStepIndex(2);
+
+    // Step 3: Analyzing (Actual API Call)
+    // We start a slow crawl for progress while waiting for API
+    let apiProgress = 50;
+    const apiInterval = setInterval(() => {
+        apiProgress += (80 - apiProgress) * 0.1; // Ease towards 80%
+        setProgress(apiProgress);
+    }, 500);
+
+    let generatedClips = [];
+    try {
+      generatedClips = await generateViralClips();
+    } catch (err) {
+      clearInterval(apiInterval);
+      setStatus('idle'); // Kembali ke idle agar layar tidak kosong
+      setError("AI analysis failed or returned invalid data. Please try again.");
+      return;
+    }
+    
+    clearInterval(apiInterval);
+    setProgress(80);
+    setCurrentStepIndex(3);
+
+    // Step 4: Cropping (Mock)
+    await simulateProgress(80, 100, PROCESSING_STEPS[3].duration);
+    
+    // Complete
+    setClips(generatedClips);
+    setStatus('completed');
+  };
+
+  const simulateProgress = (start, end, duration) => {
+    return new Promise(resolve => {
+      const startTime = Date.now();
+      const update = () => {
+        const elapsed = Date.now() - startTime;
+        const p = Math.min(1, elapsed / duration);
+        const currentProg = start + (end - start) * p;
+        setProgress(currentProg);
+        
+        if (p < 1) {
+          requestAnimationFrame(update);
+        } else {
+          resolve();
+        }
+      };
+      requestAnimationFrame(update);
+    });
+  };
+
+  // --- Helpers ---
+  const getScoreColor = (score) => {
+    if (score >= 95) return 'text-purple-400 bg-purple-400/10 border-purple-400/20';
+    if (score >= 90) return 'text-green-400 bg-green-400/10 border-green-400/20';
+    if (score >= 80) return 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20';
+    return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
+  };
+
+  return (
+    <div className="min-h-screen bg-[#0A0A0B] text-slate-200 font-sans selection:bg-indigo-500/30">
+      
+      {/* Toast Notification Custom */}
+      {toastMessage && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] bg-indigo-600 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-300">
+          <CheckCircle2 className="w-5 h-5" />
+          <span className="font-semibold">{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Navbar */}
+      <nav className="border-b border-white/5 bg-black/20 backdrop-blur-xl sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="bg-gradient-to-tr from-indigo-600 to-purple-600 p-2 rounded-xl">
+              <Scissors className="w-5 h-5 text-white" />
+            </div>
+            <span className="font-bold text-xl tracking-tight text-white">ClipMagic<span className="text-indigo-500">.ai</span></span>
+          </div>
+          <div className="hidden sm:flex items-center gap-6 text-sm font-medium text-slate-400">
+            <a href="#" className="hover:text-white transition-colors">Features</a>
+            <a href="#" className="hover:text-white transition-colors">Pricing</a>
+            <button className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition-colors">
+              Sign In
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        
+        {/* Hero & Input Section */}
+        {status === 'idle' && (
+          <div className="max-w-3xl mx-auto text-center mt-12 mb-20 animate-in fade-in slide-in-from-bottom-8 duration-700">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-sm font-medium mb-6 border border-indigo-500/20">
+              <Sparkles className="w-4 h-4" />
+              <span>Gemini 3.1 AI Powered</span>
+            </div>
+            <h1 className="text-5xl sm:text-6xl font-black tracking-tight text-white mb-6 leading-tight">
+              Turn 1 long video into <br/>
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400">
+                10 viral shorts.
+              </span>
+            </h1>
+            <p className="text-lg text-slate-400 mb-10 max-w-2xl mx-auto">
+              Drop a YouTube link below. Our AI finds the most engaging moments, auto-crops to 9:16, and adds dynamic captions in seconds.
+            </p>
+            
+            <div className="flex flex-col sm:flex-row gap-3 max-w-2xl mx-auto relative z-10">
+              <div className="relative flex-1">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Youtube className="h-5 w-5 text-slate-500" />
+                </div>
+                <input 
+                  type="text" 
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="Paste YouTube URL here (e.g., https://youtu.be/...)"
+                  className="block w-full pl-11 pr-4 py-4 bg-white/5 border border-white/10 rounded-2xl text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white/10 transition-all outline-none"
+                  onKeyDown={(e) => e.key === 'Enter' && handleClipIt()}
+                />
+              </div>
+              <button 
+                onClick={handleClipIt}
+                className="px-8 py-4 bg-white text-black font-bold rounded-2xl hover:bg-slate-200 transition-transform active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)]"
+              >
+                Get Clips <Zap className="w-4 h-4" />
+              </button>
+            </div>
+            
+            {error && (
+              <div className="mt-4 text-red-400 text-sm flex items-center justify-center gap-1">
+                <AlertCircle className="w-4 h-4" /> {error}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Processing State */}
+        {status === 'processing' && (
+          <div className="max-w-2xl mx-auto mt-20 p-8 rounded-3xl bg-white/[0.02] border border-white/5 shadow-2xl backdrop-blur-sm animate-in zoom-in-95 duration-500">
+            <div className="flex justify-center mb-8">
+              <div className="relative">
+                <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 rounded-full animate-pulse"></div>
+                <Loader2 className="w-16 h-16 text-indigo-500 animate-spin relative z-10" />
+              </div>
+            </div>
+            
+            <h2 className="text-2xl font-bold text-center text-white mb-8">
+              Analyzing Video...
+            </h2>
+
+            <div className="space-y-6">
+              {PROCESSING_STEPS.map((step, idx) => {
+                const isActive = idx === currentStepIndex;
+                const isPast = idx < currentStepIndex;
+                
+                return (
+                  <div key={step.id} className="flex items-center gap-4">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-colors duration-300
+                      ${isPast ? 'bg-indigo-500 border-indigo-500 text-white' : 
+                        isActive ? 'border-indigo-500 text-indigo-400' : 'border-slate-800 text-slate-700'}`}>
+                      {isPast ? <CheckCircle2 className="w-5 h-5" /> : <span className="text-xs font-bold">{idx + 1}</span>}
+                    </div>
+                    <span className={`font-medium transition-colors duration-300 ${isActive ? 'text-white' : isPast ? 'text-slate-400' : 'text-slate-600'}`}>
+                      {step.label}
+                    </span>
+                    {isActive && <span className="ml-auto flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                    </span>}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="mt-10 h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300 ease-out relative"
+                style={{ width: `${progress}%` }}
+              >
+                <div className="absolute top-0 right-0 bottom-0 left-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.2)_50%,transparent_75%,transparent_100%)] bg-[length:20px_20px] animate-[shimmer_1s_infinite_linear]"></div>
+              </div>
+            </div>
+            <div className="mt-2 text-right text-xs text-slate-500 font-mono">{Math.round(progress)}%</div>
+          </div>
+        )}
+
+        {/* Results Grid */}
+        {status === 'completed' && (
+          <div className="animate-in fade-in slide-in-from-bottom-10 duration-700">
+            <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-4">
+              <div>
+                <h2 className="text-3xl font-black text-white flex items-center gap-3">
+                  <Sparkles className="text-purple-400" />
+                  Your Viral Clips
+                </h2>
+                <p className="text-slate-400 mt-2">We found 10 highly engaging moments perfectly formatted for TikTok & Reels.</p>
+              </div>
+              <button 
+                onClick={() => setStatus('idle')}
+                className="text-sm font-medium text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-lg transition-colors"
+              >
+                Clip Another Video
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
+              {clips.map((clip, index) => (
+                <div key={index} className="group bg-[#151518] border border-white/5 hover:border-white/20 rounded-2xl overflow-hidden transition-all hover:shadow-2xl hover:shadow-indigo-500/10 flex flex-col">
+                  
+                  {/* 9:16 Video Placeholder */}
+                  <div className="relative aspect-[9/16] bg-slate-900 overflow-hidden isolate">
+                    {/* Fake video background (blurred gradient) */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/40 via-slate-900 to-purple-900/40 mix-blend-overlay z-0"></div>
+                    <div className="absolute inset-0 opacity-20 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-400 via-slate-900 to-black z-0"></div>
+                    
+                    {/* Simulated Captions Overlay */}
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6">
+                      <div className="transform transition-transform group-hover:scale-105 duration-500 text-center">
+                        <span 
+                          className="text-2xl sm:text-3xl font-black uppercase text-yellow-400 drop-shadow-[0_2px_2px_rgba(0,0,0,1)] leading-tight tracking-tight"
+                          style={{ WebkitTextStroke: '1px black' }}
+                        >
+                          {clip.captionPreview.split(' ').map((word, i) => (
+                            <React.Fragment key={i}>
+                              <span className={i % 2 === 0 ? "text-white" : "text-yellow-400"}>{word} </span>
+                            </React.Fragment>
+                          ))}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Top Badges */}
+                    <div className="absolute top-3 left-3 right-3 flex justify-between items-start z-20">
+                      <div className={`px-2.5 py-1 rounded-md text-xs font-bold border backdrop-blur-md flex items-center gap-1 shadow-lg ${getScoreColor(clip.viralScore)}`}>
+                        <TrendingUp className="w-3 h-3" />
+                        Score: {clip.viralScore}
+                      </div>
+                      <div className="bg-black/60 backdrop-blur-md text-white px-2 py-1 rounded text-[10px] font-mono font-medium flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        0:{Math.floor(Math.random() * 40 + 15)}
+                      </div>
+                    </div>
+
+                    {/* Play Overlay (appears on hover) */}
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center border border-white/30 text-white backdrop-blur-md">
+                        <Play className="w-6 h-6 ml-1" fill="currentColor" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card Details */}
+                  <div className="p-4 flex flex-col flex-grow bg-gradient-to-b from-transparent to-black/40">
+                    <h3 className="text-sm font-bold text-slate-100 line-clamp-2 leading-snug mb-1" title={clip.title}>
+                      {clip.title}
+                    </h3>
+                    <p className="text-xs text-slate-400 line-clamp-2 mb-3" title={clip.reasoning}>
+                      {clip.reasoning}
+                    </p>
+                    
+                    <div className="mt-auto">
+                      <button 
+                        onClick={() => {
+                          setToastMessage('Downloading "' + clip.title + '" in HD...');
+                          setTimeout(() => setToastMessage(''), 3000);
+                        }}
+                        className="w-full bg-white/10 hover:bg-white text-slate-300 hover:text-black py-2.5 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center justify-center gap-2 group/btn"
+                      >
+                        <Download className="w-4 h-4 group-hover/btn:translate-y-0.5 transition-transform" /> 
+                        Download HD
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </main>
+
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes shimmer {
+          0% { background-position: -20px 0; }
+          100% { background-position: 20px 0; }
+        }
+      `}} />
+    </div>
+  );
+};
+
+export default App;
